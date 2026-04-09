@@ -23,34 +23,75 @@ func main() {
 	input := getPrompt()
 	client, ctx := initializeClient()
 
-	var contents []*genai.Content
-	contents = append(contents, genai.NewContentFromText("You're an AI CodeAct agent, reply to the prompt solving it using exclusively powershell commands. Output ONLY a powershell script/commands wrapped in ```powershell  ... ```. I'll send you the output of your script execution in a loop so you can verify the result and output more scripts to execute if needed. Once the result or the prompt has been properly completed, wait for the output of the final script, check if it's the expected then output [DONE] to end the session.\n Prompt: "+input, genai.RoleUser))
+	prompt := `You are an expert Senior Software Engineer and Security Auditor acting as an Automated Code Reviewer. Your task is to analyze code changes and provide a comprehensive, constructive code review.
+				Use your provided native tools to read files and get git diffs. If the native tools are insufficient to understand the workspace, you can output powershell scripts wrapped in ` + "```powershell ... ```" + ` to execute local commands (like linters or formatting tools).
+				Always start by requesting the git diff (using your tool or a script) if it is not provided in the prompt.
+				Analyze the code for:
+				- Logic flaws or potential bugs
+				- Security vulnerabilities
+				- Best practices and code style
+				- Performance bottlenecks
+				If you write a powershell script, I will execute it locally and send you the output in our loop.
+				Once you have retrieved the necessary information and completed your review, provide a final structured review in Markdown format. If you can provide an automated fix, output the fixing powershell script.
+				Once the task is fully completed and your final review is delivered, output the exact string [DONE] on its own line to end the session.
+				Prompt: ` + input
 
+	var contents []*genai.Content
+	contents = append(contents, genai.NewContentFromText(prompt, genai.RoleUser))
+	config := getToolConfig()
 	fmt.Println("Calling API")
 	result, err := client.Models.GenerateContent(
 		ctx,
 		"gemini-3-flash-preview",
 		contents,
-		nil,
+		config,
 	)
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	for !strings.Contains(result.Text(), "[DONE]") {
-		fmt.Println(result.Text())
-		fmt.Println("Executing script")
-		output := executeScript(cleanScript(result.Text()))
-		fmt.Println("Output from previous script: " + output)
-		fmt.Println("Calling API with output")
-		contents = append(contents, genai.NewContentFromText(result.Text(), genai.RoleModel), genai.NewContentFromText("Output from previous script: "+string(output), genai.RoleUser))
-		result, err = client.Models.GenerateContent(
-			ctx,
-			"gemini-3-flash-preview",
-			contents,
-			nil,
-		)
-		if err != nil {
-			log.Fatal(err)
+
+	for {
+		if len(result.FunctionCalls()) > 0 {
+			fmt.Println(result.FunctionCalls())
+			for _, call := range result.FunctionCalls() {
+				if handler, ok := tools[call.Name]; ok {
+					callResult := handler(call)
+					contents = append(contents, genai.NewContentFromFunctionResponse(call.Name, map[string]any{"content": callResult}, genai.RoleUser))
+					result, err = client.Models.GenerateContent(
+						ctx,
+						"gemini-3-flash-preview",
+						contents,
+						nil,
+					)
+					if err != nil {
+						log.Fatal(err)
+					}
+				} else {
+					log.Fatal("Unknown tool: " + call.Name)
+				}
+			}
+		} else {
+			text := result.Text()
+			if strings.Contains(text, "[DONE]") {
+				break
+			}
+
+			fmt.Println(text)
+			fmt.Println("Executing script")
+			output := executeScript(cleanScript(text))
+			fmt.Println("Output from previous script: " + output)
+			fmt.Println("Calling API with output")
+			contents = append(contents, genai.NewContentFromText(text, genai.RoleModel), genai.NewContentFromText("Output from previous script: "+string(output), genai.RoleUser))
+			result, err = client.Models.GenerateContent(
+				ctx,
+				"gemini-3-flash-preview",
+				contents,
+				nil,
+			)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 	fmt.Println("DONE")
@@ -123,4 +164,58 @@ func executeScript(script string) string {
 	}
 
 	return string(output)
+}
+
+func getToolConfig() *genai.GenerateContentConfig {
+	return &genai.GenerateContentConfig{
+		Tools: []*genai.Tool{
+			{
+				FunctionDeclarations: []*genai.FunctionDeclaration{
+					{
+						// No parameters needed, we just run git diff
+						Name:        "get_git_diff",
+						Description: "Returns the git diff for the current local repository. Call this to see the unstaged/staged changes.",
+					},
+					{
+						// Parameters needed for reading specific files
+						Name:        "read_file_contents",
+						Description: "Reads the contents of a file at the given filepath.",
+						Parameters: &genai.Schema{
+							Type: genai.TypeObject,
+							Properties: map[string]*genai.Schema{
+								"filepath": {
+									Type:        genai.TypeString,
+									Description: "The relative or absolute path of the file to read.",
+								},
+							},
+							Required: []string{"filepath"},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+var tools = map[string]func(*genai.FunctionCall) string{
+	"get_git_diff":       handleGetGitDiff,
+	"read_file_contents": handleReadFileContents,
+}
+
+func handleGetGitDiff(call *genai.FunctionCall) string {
+	cmd := exec.Command("git", "diff")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("Error getting git diff: %v", err)
+	}
+	return string(output)
+}
+
+func handleReadFileContents(call *genai.FunctionCall) string {
+	filepath := call.Args["filepath"].(string)
+	bytes, err := os.ReadFile(filepath)
+	if err != nil {
+		return fmt.Sprintf("Error reading file: %v", err)
+	}
+	return string(bytes)
 }
