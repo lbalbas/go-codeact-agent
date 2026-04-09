@@ -3,14 +3,17 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
-	"google.golang.org/genai"
+	"github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
 func main() {
@@ -36,63 +39,86 @@ func main() {
 				Once the task is fully completed and your final review is delivered, output the exact string [DONE] on its own line to end the session.
 				Prompt: ` + input
 
-	var contents []*genai.Content
-	contents = append(contents, genai.NewContentFromText(prompt, genai.RoleUser))
-	config := getToolConfig()
-	fmt.Println("Calling API")
-	result, err := client.Models.GenerateContent(
-		ctx,
-		"gemini-3-flash-preview",
-		contents,
-		config,
-	)
-
-	if err != nil {
-		log.Fatal(err)
+	contents := []openai.ChatCompletionMessage{
+		{
+			Role:    openai.ChatMessageRoleUser,
+			Content: prompt,
+		},
 	}
+	toolsList := getToolConfig()
 
 	for {
-		if len(result.FunctionCalls()) > 0 {
-			fmt.Println(result.FunctionCalls())
-			for _, call := range result.FunctionCalls() {
-				if handler, ok := tools[call.Name]; ok {
-					callResult := handler(call)
-					contents = append(contents, genai.NewContentFromFunctionResponse(call.Name, map[string]any{"content": callResult}, genai.RoleUser))
-					result, err = client.Models.GenerateContent(
-						ctx,
-						"gemini-3-flash-preview",
-						contents,
-						nil,
-					)
-					if err != nil {
-						log.Fatal(err)
-					}
+		fmt.Println("Calling API")
+		req := openai.ChatCompletionRequest{
+			Model:    "llama-3.3-70b-versatile",
+			Messages: contents,
+			Tools:    toolsList,
+		}
+
+		result, err := client.CreateChatCompletion(ctx, req)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		msg := result.Choices[0].Message
+
+		if len(msg.ToolCalls) > 0 {
+			// Append the assistant's tool call message
+			contents = append(contents, msg)
+			
+			for _, call := range msg.ToolCalls {
+				fmt.Println("Tool Call:", call.Function.Name)
+				if handler, ok := tools[call.Function.Name]; ok {
+					callResult := handler(call.Function.Arguments)
+					// Append the tool result
+					contents = append(contents, openai.ChatCompletionMessage{
+						Role:       openai.ChatMessageRoleTool,
+						Content:    callResult,
+						Name:       call.Function.Name,
+						ToolCallID: call.ID,
+					})
 				} else {
-					log.Fatal("Unknown tool: " + call.Name)
+					log.Fatal("Unknown tool: " + call.Function.Name)
 				}
 			}
 		} else {
-			text := result.Text()
+			text := msg.Content
 			if strings.Contains(text, "[DONE]") {
+				// Print the final review (strip the [DONE] marker) before exiting
+				finalText := strings.Replace(text, "[DONE]", "", -1)
+				finalText = strings.TrimSpace(finalText)
+				if finalText != "" {
+					fmt.Println(finalText)
+				}
 				break
 			}
 
 			fmt.Println(text)
-			fmt.Println("Executing script")
-			output := executeScript(cleanScript(text))
-			fmt.Println("Output from previous script: " + output)
-			fmt.Println("Calling API with output")
-			contents = append(contents, genai.NewContentFromText(text, genai.RoleModel), genai.NewContentFromText("Output from previous script: "+string(output), genai.RoleUser))
-			result, err = client.Models.GenerateContent(
-				ctx,
-				"gemini-3-flash-preview",
-				contents,
-				nil,
-			)
-			if err != nil {
-				log.Fatal(err)
+
+			// Only attempt script execution if the response contains a powershell code block
+			if strings.Contains(text, "```powershell") || strings.Contains(text, "```ps") {
+				fmt.Println("Executing script")
+				output := executeScript(cleanScript(text))
+				fmt.Println("Output from previous script: " + output)
+
+				// Append assistant's text msg and the simulated user output
+				contents = append(contents, msg)
+				contents = append(contents, openai.ChatCompletionMessage{
+					Role:    openai.ChatMessageRoleUser,
+					Content: "Output from previous script: " + output,
+				})
+			} else {
+				// No script to execute, just append and continue the conversation
+				contents = append(contents, msg)
+				contents = append(contents, openai.ChatCompletionMessage{
+					Role:    openai.ChatMessageRoleUser,
+					Content: "Continue with the review. Remember to output [DONE] when finished.",
+				})
 			}
 		}
+		
+		fmt.Println("Waiting 1 minute to avoid API rate limits...")
+		time.Sleep(1 * time.Minute)
 	}
 	fmt.Println("DONE")
 }
@@ -115,21 +141,18 @@ func getPrompt() string {
 	return input
 }
 
-func initializeClient() (client *genai.Client, ctx context.Context) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
+func initializeClient() (client *openai.Client, ctx context.Context) {
+	apiKey := os.Getenv("GROQ_API_KEY")
 
 	if apiKey == "" {
-		log.Fatal("GEMINI_API_KEY environment variable not set")
+		log.Fatal("GROQ_API_KEY environment variable not set")
 	}
 
-	ctx = context.Background()
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey: apiKey,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	return client, ctx
+	config := openai.DefaultConfig(apiKey)
+	config.BaseURL = "https://api.groq.com/openai/v1"
+
+	client = openai.NewClientWithConfig(config)
+	return client, context.Background()
 }
 
 func cleanScript(script string) string {
@@ -166,43 +189,45 @@ func executeScript(script string) string {
 	return string(output)
 }
 
-func getToolConfig() *genai.GenerateContentConfig {
-	return &genai.GenerateContentConfig{
-		Tools: []*genai.Tool{
-			{
-				FunctionDeclarations: []*genai.FunctionDeclaration{
-					{
-						// No parameters needed, we just run git diff
-						Name:        "get_git_diff",
-						Description: "Returns the git diff for the current local repository. Call this to see the unstaged/staged changes.",
-					},
-					{
-						// Parameters needed for reading specific files
-						Name:        "read_file_contents",
-						Description: "Reads the contents of a file at the given filepath.",
-						Parameters: &genai.Schema{
-							Type: genai.TypeObject,
-							Properties: map[string]*genai.Schema{
-								"filepath": {
-									Type:        genai.TypeString,
-									Description: "The relative or absolute path of the file to read.",
-								},
-							},
-							Required: []string{"filepath"},
+func getToolConfig() []openai.Tool {
+	return []openai.Tool{
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "get_git_diff",
+				Description: "Returns the git diff for the current local repository. Call this to see the unstaged/staged changes.",
+				Parameters: jsonschema.Definition{
+					Type:       jsonschema.Object,
+					Properties: map[string]jsonschema.Definition{},
+				},
+			},
+		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "read_file_contents",
+				Description: "Reads the contents of a file at the given filepath.",
+				Parameters: jsonschema.Definition{
+					Type: jsonschema.Object,
+					Properties: map[string]jsonschema.Definition{
+						"filepath": {
+							Type:        jsonschema.String,
+							Description: "The relative or absolute path of the file to read.",
 						},
 					},
+					Required: []string{"filepath"},
 				},
 			},
 		},
 	}
 }
 
-var tools = map[string]func(*genai.FunctionCall) string{
+var tools = map[string]func(string) string{
 	"get_git_diff":       handleGetGitDiff,
 	"read_file_contents": handleReadFileContents,
 }
 
-func handleGetGitDiff(call *genai.FunctionCall) string {
+func handleGetGitDiff(args string) string {
 	cmd := exec.Command("git", "diff")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -211,9 +236,15 @@ func handleGetGitDiff(call *genai.FunctionCall) string {
 	return string(output)
 }
 
-func handleReadFileContents(call *genai.FunctionCall) string {
-	filepath := call.Args["filepath"].(string)
-	bytes, err := os.ReadFile(filepath)
+func handleReadFileContents(args string) string {
+	var input struct {
+		Filepath string `json:"filepath"`
+	}
+	if err := json.Unmarshal([]byte(args), &input); err != nil {
+		return fmt.Sprintf("Error parsing arguments: %v", err)
+	}
+
+	bytes, err := os.ReadFile(input.Filepath)
 	if err != nil {
 		return fmt.Sprintf("Error reading file: %v", err)
 	}
