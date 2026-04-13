@@ -1,1 +1,18 @@
+# Environment
 .env
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build output
+/bin/
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp

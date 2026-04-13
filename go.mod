@@ -1,4 +1,4 @@
-module main/main.go
+module github.com/lbalbas/go-codeact-agent
 
 go 1.25.0
 
