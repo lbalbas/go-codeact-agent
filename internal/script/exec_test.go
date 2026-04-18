@@ -1,45 +1,47 @@
 package script
 
-import "testing"
+import (
+	"testing"
+)
 
-func TestClean(t *testing.T) {
+func TestExtractScripts(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected string
+		expected []string
 	}{
 		{
-			name:     "no formatting",
-			input:    "echo 'hello'",
-			expected: "echo 'hello'",
+			name:     "no code blocks",
+			input:    "just some text",
+			expected: nil,
 		},
 		{
-			name:     "whitespace padding",
-			input:    "   echo 'hello'   \n\n",
-			expected: "echo 'hello'",
+			name:     "single block",
+			input:    "Here's the fix:\n```powershell\necho hello\n```\nDone.",
+			expected: []string{"echo hello"},
 		},
 		{
-			name:     "markdown wrapper",
-			input:    "```powershell\necho 'hello'\n```",
-			expected: "echo 'hello'",
+			name:     "multiple blocks",
+			input:    "Step 1:\n```powershell\necho a\n```\nStep 2:\n```powershell\necho b\n```",
+			expected: []string{"echo a", "echo b"},
 		},
 		{
-			name:     "generic markdown wrapper",
-			input:    "```\necho 'hello'\n```",
-			expected: "echo 'hello'",
-		},
-		{
-			name:     "multiline wrapper",
-			input:    "```powershell\necho 'hello'\nls\n```",
-			expected: "echo 'hello'\nls",
+			name:     "ignores non-powershell",
+			input:    "```go\nfmt.Println()\n```\n```powershell\necho yes\n```",
+			expected: []string{"echo yes"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := Clean(tt.input)
-			if result != tt.expected {
-				t.Errorf("Clean() = %q, want %q", result, tt.expected)
+			result := ExtractScripts(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Fatalf("got %d scripts, want %d", len(result), len(tt.expected))
+			}
+			for i := range result {
+				if result[i] != tt.expected[i] {
+					t.Errorf("script[%d] = %q, want %q", i, result[i], tt.expected[i])
+				}
 			}
 		})
 	}
