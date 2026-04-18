@@ -67,9 +67,11 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 			fmt.Println(text)
 
 			// Only attempt script execution if the response contains a powershell code block
-			if strings.Contains(text, "```powershell") || strings.Contains(text, "```ps") {
+			if strings.Contains(text, "```powershell") || strings.Contains(text, "```ps") || strings.Contains(text, "```ps1") {
 				fmt.Println("Executing script")
-				output := script.Execute(script.Clean(text))
+				scripts := script.ExtractScripts(text)
+				scriptBody := strings.Join(scripts, "\n")
+				output := script.Execute(scriptBody, 30)
 				fmt.Println("Output from previous script: " + output)
 
 				// Append assistant's text msg and the simulated user output
