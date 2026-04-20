@@ -4,34 +4,24 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
 
+var scriptBlockRegex = regexp.MustCompile(`(?is)\x60\x60\x60(?:powershell|ps|ps1)\s*(.*?)\x60\x60\x60`)
+
 func ExtractScripts(text string) []string {
 	var scripts []string
-	lines := strings.Split(text, "\n")
-	var current []string
-	inBlock := false
 
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if !inBlock && (trimmed == "```powershell" || trimmed == "```ps" || trimmed == "```ps1") {
-			inBlock = true
-			current = nil
-			continue
-		}
-		if inBlock && trimmed == "```" {
-			inBlock = false
-			if len(current) > 0 {
-				scripts = append(scripts, strings.TrimSpace(strings.Join(current, "\n")))
-			}
-			continue
-		}
-		if inBlock {
-			current = append(current, line)
+	matches := scriptBlockRegex.FindAllStringSubmatch(text, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			scripts = append(scripts, strings.TrimSpace(match[1]))
 		}
 	}
+
 	return scripts
 }
 
