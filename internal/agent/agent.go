@@ -71,21 +71,35 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 				fmt.Println("Executing script")
 				scripts := script.ExtractScripts(text)
 				scriptBody := strings.Join(scripts, "\n")
-				output := script.Execute(scriptBody, 30)
-				fmt.Println("Output from previous script: " + output)
+				if scriptBody == "" {
+					contents = append(contents, msg)
+					contents = append(contents, openai.ChatCompletionMessage{
+						Role:    openai.ChatMessageRoleUser,
+						Content: "Error: Extracted PowerShell script block was empty. Please provide a valid script.",
+					})
+				} else {
+					output := script.Execute(scriptBody, 30)
+					fmt.Println("Output from previous script: " + output)
 
-				// Append assistant's text msg and the simulated user output
+					// Append assistant's text msg and the simulated user output
+					contents = append(contents, msg)
+					contents = append(contents, openai.ChatCompletionMessage{
+						Role:    openai.ChatMessageRoleUser,
+						Content: "Output from previous script: " + output,
+					})
+				}
+			} else if strings.Contains(text, "```") {
 				contents = append(contents, msg)
 				contents = append(contents, openai.ChatCompletionMessage{
 					Role:    openai.ChatMessageRoleUser,
-					Content: "Output from previous script: " + output,
+					Content: "Error: I noticed you attempted to run commands, but you used the wrong block format. You MUST use strictly ```powershell ... ``` to execute commands in this environment.",
 				})
 			} else {
 				// No script to execute, just append and continue the conversation
 				contents = append(contents, msg)
 				contents = append(contents, openai.ChatCompletionMessage{
 					Role:    openai.ChatMessageRoleUser,
-					Content: "Continue with the review. Remember to output [DONE] when finished.",
+					Content: "Continue with the review. Remember, if you need to execute commands, output them strictly in a ```powershell block. And remember to output [DONE] when finished.",
 				})
 			}
 		}
