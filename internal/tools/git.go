@@ -12,5 +12,8 @@ func handleGetGitDiff(args string) string {
 	if err != nil {
 		return fmt.Sprintf("Error getting git diff: %v", err)
 	}
+	if len(output) == 0 {
+		return "No changes"
+	}
 	return string(output)
 }
