@@ -3,6 +3,7 @@ package script
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -57,6 +58,11 @@ func Execute(script string, timeoutSeconds int) string {
 	}
 
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode := exitErr.ExitCode()
+			return fmt.Sprintf("Error: %v (exit code: %d)\nOutput:\n%s", err, exitCode, result)
+		}
 		return fmt.Sprintf("Error: %v\nOutput:\n%s", err, result)
 	}
 	if strings.TrimSpace(result) == "" {
