@@ -1,6 +1,7 @@
 package script
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -26,6 +27,8 @@ func ExtractScripts(text string) []string {
 }
 
 func Execute(script string, timeoutSeconds int) string {
+	var outBuf bytes.Buffer
+
 	if script == "" {
 		return "Error: empty script"
 	}
@@ -37,13 +40,15 @@ func Execute(script string, timeoutSeconds int) string {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-	output, err := cmd.CombinedOutput()
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+	err := cmd.Run()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Sprintf("Error: script timed out after %ds", timeoutSeconds)
+		return fmt.Sprintf("Error: script timed out after %ds. Partial Output:\n%s", timeoutSeconds, outBuf.String())
 	}
 
-	result := string(output)
+	result := string(outBuf.String())
 
 	// Cap output at 10KB to avoid blowing up the context window
 	const maxLen = 10 * 1024
