@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -19,16 +21,17 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 	handlers := tools.Handlers()
 
 	for {
-		fmt.Println("Calling API")
 		req := openai.ChatCompletionRequest{
 			Model:    llm.Model,
 			Messages: contents,
 			Tools:    toolsList,
 		}
 
-		result, err := client.CreateChatCompletion(ctx, req)
+		slog.Info("Calling API", "model", req.Model)
+
+		result, err := callWithRetry(ctx, client, req)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("API error: ", err)
 		}
 
 		msg := result.Choices[0].Message
@@ -38,7 +41,7 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 			contents = append(contents, msg)
 
 			for _, call := range msg.ToolCalls {
-				fmt.Println("Tool Call:", call.Function.Name)
+				slog.Info("Executing tool", "tool_name", call.Function.Name)
 				if handler, ok := handlers[call.Function.Name]; ok {
 					callResult := handler(call.Function.Arguments)
 					// Append the tool result
@@ -64,11 +67,9 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 				break
 			}
 
-			fmt.Println(text)
-
 			// Only attempt script execution if the response contains a powershell code block
 			if strings.Contains(text, "```powershell") || strings.Contains(text, "```ps") || strings.Contains(text, "```ps1") {
-				fmt.Println("Executing script")
+				slog.Debug("Executing extracted powershell script")
 				scripts := script.ExtractScripts(text)
 				scriptBody := strings.Join(scripts, "\n")
 				if scriptBody == "" {
@@ -79,7 +80,7 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 					})
 				} else {
 					output := script.Execute(scriptBody, 30)
-					fmt.Println("Output from previous script: " + output)
+					slog.Info("Output from previous script", "output", output)
 
 					// Append assistant's text msg and the simulated user output
 					contents = append(contents, msg)
@@ -104,7 +105,29 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 			}
 		}
 
-		fmt.Println("Waiting 1 minute to avoid API rate limits...")
+		slog.Info("Waiting 1 minute to avoid API rate limits...")
 		time.Sleep(1 * time.Minute)
 	}
+}
+
+func callWithRetry(ctx context.Context, client *openai.Client, req openai.ChatCompletionRequest) (*openai.ChatCompletionResponse, error) {
+	maxRetries := 5
+	waitDelay := 20 * time.Second
+	for i := 0; i < maxRetries; i++ {
+		result, err := client.CreateChatCompletion(ctx, req)
+		if err == nil {
+			return &result, nil
+		}
+		// Check if the error is a Rate Limit (429)
+		var apiErr *openai.APIError
+		if errors.As(err, &apiErr) && apiErr.HTTPStatusCode == 429 {
+			slog.Warn("Rate limit hit, retrying...", "attempt", i+1, "wait", waitDelay)
+			time.Sleep(waitDelay)
+			waitDelay *= 2 // Exponential backoff: 2s, 4s, 8s...
+			continue
+		}
+		// If it's some other error, don't retry
+		return nil, err
+	}
+	return nil, fmt.Errorf("max retries exceeded")
 }
