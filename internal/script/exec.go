@@ -54,7 +54,9 @@ func Execute(script string, timeoutSeconds int) string {
 	// Cap output at 10KB to avoid blowing up the context window
 	const maxLen = 10 * 1024
 	if len(result) > maxLen {
-		result = result[:maxLen] + "\n... (output truncated)"
+		head := result[:maxLen/2]
+		tail := result[len(result)-maxLen/2:]
+		result = head + "\n... [OUTPUT TRUNCATED IN MIDDLE]\n" + tail
 	}
 
 	if err != nil {
