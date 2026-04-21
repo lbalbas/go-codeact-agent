@@ -104,9 +104,6 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 				})
 			}
 		}
-
-		slog.Info("Waiting 1 minute to avoid API rate limits...")
-		time.Sleep(1 * time.Minute)
 	}
 }
 
