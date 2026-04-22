@@ -1,11 +1,13 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -79,9 +81,21 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 						Content: "Error: Extracted PowerShell script block was empty. Please provide a valid script.",
 					})
 				} else {
-					output := script.Execute(scriptBody, 30)
-					slog.Info("Output from previous script", "output", output)
-
+					fmt.Printf("\n[PROPOSED SCRIPT]\n%s\n", scriptBody)
+					fmt.Print(">> Do you want to run this script? (y/N): ")
+					// 2. Read the user's input from the console
+					reader := bufio.NewReader(os.Stdin)
+					response, _ := reader.ReadString('\n')
+					response = strings.ToLower(strings.TrimSpace(response))
+					// 3. Conditional execution
+					var output string
+					if response == "y" || response == "yes" {
+						slog.Info("Execution approved by user")
+						output = script.Execute(scriptBody, 30)
+					} else {
+						slog.Warn("Execution rejected by user")
+						output = "Error: Script execution was rejected by the user. Please ask for permission again or try a different approach."
+					}
 					// Append assistant's text msg and the simulated user output
 					contents = append(contents, msg)
 					contents = append(contents, openai.ChatCompletionMessage{
