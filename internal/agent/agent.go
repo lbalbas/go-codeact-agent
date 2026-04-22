@@ -61,7 +61,7 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 			text := msg.Content
 			if strings.Contains(text, "[DONE]") {
 				// Print the final review (strip the [DONE] marker) before exiting
-				finalText := strings.Replace(text, "[DONE]", "", -1)
+				finalText := strings.ReplaceAll(text, "[DONE]", "")
 				finalText = strings.TrimSpace(finalText)
 				if finalText != "" {
 					fmt.Println(finalText)
@@ -124,7 +124,7 @@ func RunLoop(ctx context.Context, client *openai.Client, contents []openai.ChatC
 func callWithRetry(ctx context.Context, client *openai.Client, req openai.ChatCompletionRequest) (*openai.ChatCompletionResponse, error) {
 	maxRetries := 5
 	waitDelay := 20 * time.Second
-	for i := 0; i < maxRetries; i++ {
+	for i := range maxRetries {
 		result, err := client.CreateChatCompletion(ctx, req)
 		if err == nil {
 			return &result, nil
