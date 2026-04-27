@@ -16,10 +16,19 @@ import (
 )
 
 func main() {
-	// Load the .env file before reading environment variables
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("No .env file found or error loading it, continuing with environment variables")
+	// Try loading .env from current directory
+	_ = godotenv.Load()
+
+	// Fallback to home directory if local .env doesn't satisfy requirements
+	if os.Getenv("GROQ_API_KEY") == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			_ = godotenv.Load(home + "/.go-agent.env")
+		}
+	}
+
+	if os.Getenv("GROQ_API_KEY") == "" {
+		log.Println("Note: GROQ_API_KEY not found in .env or ~/.go-agent.env. Ensure it is set in your environment variables.")
 	}
 
 	input, err := getPrompt()

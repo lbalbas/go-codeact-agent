@@ -53,19 +53,38 @@ Unlike standard agents that rely purely on pre-defined tools, this agent uses a 
 
 ## Usage
 
-Run the agent from the root of any git repository you want to review:
-
+### Local Usage
+Run the agent from the project root:
 ```bash
-go run ./cmd/agent
+go run ./cmd/go-agent
 ```
 
-You'll be prompted to enter a task description. The agent will then autonomously gather context and produce a code review.
+### Global Installation (Recommended)
+You can install the agent as a global CLI tool to use it in any project:
+
+1. **Install the binary**:
+   ```bash
+   go install ./cmd/go-agent
+   ```
+
+2. **Set up Global Configuration**:
+   Copy your `.env` file to your home directory so the agent can find your API key from anywhere:
+   ```powershell
+   # Windows
+   copy .env $HOME\.go-agent.env
+   ```
+
+3. **Run from any project**:
+   Open a terminal in the project you want to review and run:
+   ```bash
+   go-agent
+   ```
 
 ## Project Structure
 
 ```
 go-codeact-agent/
-├── cmd/agent/          ← Application entry point
+├── cmd/go-agent/       ← Application entry point (installs as 'go-agent')
 │   └── main.go
 ├── internal/           ← Private application packages
 │   ├── agent/          ← Core conversation loop
